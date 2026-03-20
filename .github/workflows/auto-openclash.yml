@@ -1,0 +1,324 @@
+#=================================================
+# Auto Build OpenClash Run Files
+# Description: 自动检查 OpenClash 官方 Release 稳定版并打包
+#=================================================
+
+name: Auto Build OpenClash Run Files
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 每6小时检查一次
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: '强制打包（忽略版本检查）'
+        required: false
+        default: 'false'
+
+env:
+  TZ: Asia/Shanghai
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  check_version:
+    name: Check OpenClash Stable Release
+    runs-on: ubuntu-22.04
+    outputs:
+      has_update: ${{ steps.compare_versions.outputs.has_update }}
+      new_version: ${{ steps.get_latest_release.outputs.tag_name }}
+      release_url: ${{ steps.get_latest_release.outputs.html_url }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Get latest OpenClash stable release
+        id: get_latest_release
+        run: |
+          # 获取 OpenClash 官方最新 Release（排除 prerelease）
+          echo "获取 OpenClash 官方最新稳定版..."
+          
+          LATEST_RELEASE=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases/latest)
+          TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name // ""')
+          IS_PRERELEASE=$(echo "$LATEST_RELEASE" | jq -r '.prerelease // false')
+          HTML_URL=$(echo "$LATEST_RELEASE" | jq -r '.html_url // ""')
+          
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "is_prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+          echo "html_url=$HTML_URL" >> $GITHUB_OUTPUT
+          
+          echo "最新版本: $TAG_NAME"
+          echo "是否预发布: $IS_PRERELEASE"
+          
+          # 只处理稳定版，跳过预发布版
+          if [ "$IS_PRERELEASE" == "true" ]; then
+            echo "⚠️ 当前最新是预发布版本，跳过自动构建"
+            echo "skip_reason=prerelease" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Get current build version
+        id: current_version
+        run: |
+          # 获取当前仓库最新 release 版本
+          CURRENT_TAG=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/latest" | \
+            jq -r '.tag_name // ""')
+          echo "current_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
+          echo "当前已构建版本: $CURRENT_TAG"
+          
+      - name: Compare versions
+        id: compare_versions
+        run: |
+          CURRENT="${{ steps.current_version.outputs.current_tag }}"
+          LATEST="${{ steps.get_latest_release.outputs.tag_name }}"
+          IS_PRERELEASE="${{ steps.get_latest_release.outputs.is_prerelease }}"
+          FORCE="${{ github.event.inputs.force_build }}"
+          
+          echo "当前版本: $CURRENT"
+          echo "最新稳定版: $LATEST"
+          echo "是否预发布: $IS_PRERELEASE"
+          
+          # 强制打包
+          if [ "$FORCE" == "true" ]; then
+            echo "has_update=true" >> $GITHUB_OUTPUT
+            echo "🚀 强制打包模式"
+          # 如果是预发布版本，不自动构建
+          elif [ "$IS_PRERELEASE" == "true" ]; then
+            echo "has_update=false" >> $GITHUB_OUTPUT
+            echo "⏭️ 跳过预发布版本: $LATEST"
+          # 首次运行或没有当前版本
+          elif [ -z "$CURRENT" ] || [ "$CURRENT" == "null" ]; then
+            echo "has_update=true" >> $GITHUB_OUTPUT
+            echo "📦 首次运行，开始构建"
+          # 检查是否有新版本
+          elif [ -n "$LATEST" ] && [ "$CURRENT" != "$LATEST" ]; then
+            echo "has_update=true" >> $GITHUB_OUTPUT
+            echo "✨ 发现新稳定版: $LATEST"
+          else
+            echo "has_update=false" >> $GITHUB_OUTPUT
+            echo "✅ 已是最新稳定版: $CURRENT"
+          fi
+
+  build_package:
+    name: Build OpenClash Package
+    needs: check_version
+    if: needs.check_version.outputs.has_update == 'true'
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Maximize build space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY"
+          sudo apt-get clean
+          df -h
+          
+      - name: Create working directories
+        run: |
+          mkdir -p OpenClash openclash-x86 openclash-a53 Meta output
+          echo "工作目录创建完成"
+          
+      - name: Checkout OpenClash package branch
+        uses: actions/checkout@v4
+        with:
+          repository: vernesong/OpenClash
+          path: OpenClash
+          ref: package
+          
+      - name: Copy OpenClash IPK files
+        run: |
+          echo "复制 IPK 文件..."
+          cp OpenClash/master/*.ipk openclash-x86/ 2>/dev/null || true
+          cp OpenClash/master/*.ipk openclash-a53/ 2>/dev/null || true
+          
+          echo "x86 目录内容："
+          ls -la openclash-x86/
+          echo "a53 目录内容："
+          ls -la openclash-a53/
+          
+          if ls openclash-x86/*.ipk 1>/dev/null 2>&1; then
+            echo "✅ IPK 文件复制成功"
+          else
+            echo "❌ 错误：未找到 IPK 文件"
+            exit 1
+          fi
+          
+      - name: Get version info
+        id: version_info
+        run: |
+          if [ -f "OpenClash/master/version" ]; then
+            VERSION=$(head -n 1 OpenClash/master/version | tr -d ' \n\r')
+          else
+            VERSION=$(date '+%Y%m%d')
+          fi
+          echo "version=v$VERSION" >> $GITHUB_ENV
+          echo "OpenClash 版本: v$VERSION"
+          
+      - name: Checkout OpenClash core branch
+        uses: actions/checkout@v4
+        with:
+          repository: vernesong/OpenClash
+          path: Meta
+          ref: core
+      
+      - name: Copy latest meta core
+        run: |
+          # x86_64 版本
+          echo "处理 x86_64 版本..."
+          if [ -f "Meta/master/meta/clash-linux-amd64-v1.tar.gz" ]; then
+            tar -xzvf Meta/master/meta/clash-linux-amd64-v1.tar.gz -C openclash-x86
+            mv openclash-x86/clash openclash-x86/clash_meta
+            echo "✅ x86_64 Meta 内核处理完成"
+          else
+            echo "❌ 错误：未找到 x86_64 Meta 内核"
+            exit 1
+          fi
+          
+          # ARM64 版本
+          echo "处理 ARM64 版本..."
+          if [ -f "Meta/master/meta/clash-linux-arm64.tar.gz" ]; then
+            tar -xzvf Meta/master/meta/clash-linux-arm64.tar.gz -C openclash-a53
+            mv openclash-a53/clash openclash-a53/clash_meta
+            echo "✅ ARM64 Meta 内核处理完成"
+          else
+            echo "❌ 错误：未找到 ARM64 Meta 内核"
+            exit 1
+          fi
+          
+          echo "最终文件列表："
+          ls -la openclash-x86/
+          ls -la openclash-a53/
+          
+      - name: Create install.sh script
+        run: |
+          cat << 'EOF' > openclash-x86/install.sh
+          #!/bin/sh
+          echo "开始安装 OpenClash..."
+          
+          echo "更新软件源..."
+          opkg update
+          if [ $? -ne 0 ]; then
+              echo "警告：软件源更新失败，继续尝试安装..."
+          fi
+          
+          echo "安装 OpenClash IPK..."
+          opkg install *.ipk || exit 1
+          
+          echo "安装 Meta 内核..."
+          mkdir -p /etc/openclash/core
+          mv clash_meta /etc/openclash/core/
+          chmod +x /etc/openclash/core/clash_meta
+          
+          echo "✅ OpenClash 安装完成！"
+          EOF
+          cp openclash-x86/install.sh openclash-a53/install.sh
+          chmod +x openclash-x86/install.sh openclash-a53/install.sh
+          echo "✅ 安装脚本创建完成"
+          
+      - name: Clone makeself
+        run: |
+          git clone https://github.com/megastep/makeself.git
+          echo "✅ makeself 克隆完成"
+          
+      - name: Create run files
+        run: |
+          mv openclash-x86 makeself/
+          mv openclash-a53 makeself/
+          cd makeself
+          
+          # 创建 x86 版本（命名格式：OpenClash-v0.47.055-x86_64.run）
+          ./makeself.sh --gzip \
+            openclash-x86/ \
+            "OpenClash-${{ env.version }}-x86_64.run" \
+            "OpenClash ${{ env.version }} for x86_64" \
+            ./install.sh
+          
+          # 创建 ARM64 版本（命名格式：OpenClash-v0.47.055-aarch64.run）
+          ./makeself.sh --gzip \
+            openclash-a53/ \
+            "OpenClash-${{ env.version }}-aarch64.run" \
+            "OpenClash ${{ env.version }} for ARM64" \
+            ./install.sh
+          
+          # 生成 MD5 校验文件
+          md5sum *.run > checksums.md5
+          
+          # 移动文件到 output 目录
+          mv *.run checksums.md5 ../output/
+          cd ..
+          
+          echo "✅ Run 文件创建完成"
+          ls -la output/
+          
+      - name: Create release notes
+        run: |
+          cat > release_notes.md << EOF
+          # OpenClash ${{ env.version }}
+          
+          ## 📦 包含组件
+          - OpenClash IPK: 最新稳定版
+          - Meta 内核: 最新版
+          
+          ## 🖥️ 支持平台
+          | 平台 | 文件 |
+          |------|------|
+          | x86_64 | OpenClash-${{ env.version }}-x86_64.run |
+          | aarch64 | OpenClash-${{ env.version }}-aarch64.run |
+          
+          ## 📥 安装方法
+          1. 下载对应平台的 .run 文件
+          2. 上传到 OpenWrt 设备
+          3. 添加执行权限：\`chmod +x *.run\`
+          4. 运行安装：\`./OpenClash-${{ env.version }}-xxx.run\`
+          
+          ## 🔍 文件校验
+          \`\`\`
+          $(cat output/checksums.md5 2>/dev/null)
+          \`\`\`
+          
+          ## ⏰ 构建信息
+          - 构建时间: $(date '+%Y-%m-%d %H:%M:%S')
+          - 来源版本: ${{ needs.check_version.outputs.new_version }}
+          - 来源 Release: ${{ needs.check_version.outputs.release_url }}
+          
+          ---
+          > 由 GitHub Actions 自动构建，基于 OpenClash 官方稳定版
+          EOF
+          
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.version }}
+          name: "OpenClash ${{ env.version }}"
+          body_path: release_notes.md
+          files: |
+            output/*.run
+            output/checksums.md5
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Upload build logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            makeself/*.log
+            *.log
+          retention-days: 7
+          
+      - name: Send success notification
+        if: success()
+        run: |
+          echo "✅ OpenClash ${{ env.version }} 构建成功并已发布"
+          echo "下载地址: https://github.com/${{ github.repository }}/releases/tag/${{ env.version }}"
+          
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -rf OpenClash Meta makeself output temp_*
+          echo "✅ 清理完成"
