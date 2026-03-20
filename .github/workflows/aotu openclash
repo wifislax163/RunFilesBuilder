@@ -1,0 +1,180 @@
+#=================================================
+# Auto Build OpenClash Run Files (Stable Only)
+# Description: 每天自动检查 OpenClash 官方稳定版并打包 .run 安装包
+#=================================================
+
+name: Auto Build OpenClash Run Files
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 每天 UTC 0:00（北京时间 8:00）检查一次
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: '强制打包（忽略版本检查）'
+        required: false
+        default: 'false'
+
+env:
+  TZ: Asia/Shanghai
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  check_version:
+    name: Check OpenClash Stable Release
+    runs-on: ubuntu-22.04
+    outputs:
+      has_update: ${{ steps.compare_versions.outputs.has_update }}
+      new_version: ${{ steps.get_latest_release.outputs.tag_name }}
+    
+    steps:
+      - name: Get latest OpenClash stable release
+        id: get_latest_release
+        run: |
+          LATEST_RELEASE=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases/latest)
+          TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name // ""')
+          IS_PRERELEASE=$(echo "$LATEST_RELEASE" | jq -r '.prerelease // false')
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "is_prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+          
+          if [ "$IS_PRERELEASE" == "true" ]; then
+            echo "⚠️ 当前最新是预发布版本，跳过自动构建"
+            echo "skip_reason=prerelease" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Get current build version
+        id: current_version
+        run: |
+          CURRENT_TAG=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/latest" | \
+            jq -r '.tag_name // ""')
+          echo "current_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
+          
+      - name: Compare versions
+        id: compare_versions
+        run: |
+          CURRENT="${{ steps.current_version.outputs.current_tag }}"
+          LATEST="${{ steps.get_latest_release.outputs.tag_name }}"
+          IS_PRERELEASE="${{ steps.get_latest_release.outputs.is_prerelease }}"
+          FORCE="${{ github.event.inputs.force_build }}"
+          
+          if [ "$FORCE" == "true" ]; then
+            echo "has_update=true" >> $GITHUB_OUTPUT
+          elif [ "$IS_PRERELEASE" == "true" ]; then
+            echo "has_update=false" >> $GITHUB_OUTPUT
+          elif [ -z "$CURRENT" ] || [ "$CURRENT" == "null" ]; then
+            echo "has_update=true" >> $GITHUB_OUTPUT
+          elif [ -n "$LATEST" ] && [ "$CURRENT" != "$LATEST" ]; then
+            echo "has_update=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_update=false" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs: check_version
+    if: needs.check_version.outputs.has_update == 'true'
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Create directories
+        run: mkdir -p OpenClash openclash-x86 openclash-a53
+        
+      - name: Checkout package branch
+        uses: actions/checkout@v4
+        with:
+          repository: vernesong/OpenClash
+          path: OpenClash
+          ref: package
+          
+      - name: Copy IPK files
+        run: |
+          cp OpenClash/master/*.ipk openclash-x86
+          cp OpenClash/master/*.ipk openclash-a53
+
+      - name: Get version info
+        id: extract_version
+        run: |
+          # 读取版本号，去掉首尾空格和可能的前缀 v
+          raw_version=$(head -n 1 OpenClash/master/version | tr -d ' \n\r')
+          version=$(echo "$raw_version" | sed 's/^v//')   # 去除开头的 v
+          echo "version=$version" >> $GITHUB_ENV
+
+      - name: Create Meta directory
+        run: mkdir Meta
+      
+      - name: Checkout core branch
+        uses: actions/checkout@v4
+        with:
+          repository: vernesong/OpenClash
+          path: Meta
+          ref: core
+      
+      - name: List cores
+        run: ls Meta/master/meta
+
+      - name: Copy meta core
+        run: |
+          tar -xzvf Meta/master/meta/clash-linux-amd64-v1.tar.gz -C openclash-x86
+          tar -xzvf Meta/master/meta/clash-linux-arm64.tar.gz -C openclash-a53
+          mv openclash-x86/clash openclash-x86/clash_meta
+          mv openclash-a53/clash openclash-a53/clash_meta
+
+      - name: Create install.sh
+        run: |
+          cat << 'EOF' > openclash-x86/install.sh
+          opkg update
+          if [ $? -ne 0 ]; then
+              echo "update failed。"
+              exit 1
+          fi
+          opkg install *.ipk || exit 1
+          mv clash_meta /etc/openclash/core/
+          sleep 10s
+          ifconfig br-lan > /dev/null 2>&1
+          if [ $? -ne 0 ]; then
+              echo "接口错误，重启网络。"
+              /etc/init.d/network restart
+              echo "重启完毕"
+              exit 0
+          fi
+          EOF
+          chmod +x openclash-x86/install.sh
+          cp openclash-x86/install.sh openclash-a53/install.sh
+          chmod +x openclash-a53/install.sh
+
+      - name: Clone makeself
+        run: git clone https://github.com/megastep/makeself.git
+
+      - name: Create run files
+        run: |
+          mv openclash-x86 makeself/
+          mv openclash-a53 makeself/
+          cd makeself
+          # 文件名中手动加 v（版本号本身已无 v）
+          ./makeself.sh openclash-x86/ openclash-x86-64-v${{ env.version }}.run "by github action" ./install.sh
+          ./makeself.sh openclash-a53/ openclash-aarch64_cortex-a53-v${{ env.version }}.run "by github action" ./install.sh
+
+      - name: Generate new tag & release
+        uses: softprops/action-gh-release@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.version }}
+          target_commitish: ${{ github.ref_name }}
+          prerelease: false
+          # release 名称：OpenClash-v0.47.075
+          name: "OpenClash-v${{ env.version }}"
+          body: "![Github](https://img.shields.io/badge/OpenClash.run-123456?logo=github&logoColor=fff&labelColor=red&style=for-the-badge) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.cn/archives/1) ![GitHub Downloads (all assets, specific tag)](https://img.shields.io/github/downloads/wukongdaily/RunFilesBuilder/${{ env.version }}/total?style=for-the-badge&labelColor=black&color=%2325c2a0)"
+
+      - name: Upload run files as release assets
+        uses: softprops/action-gh-release@v2.1.0
+        with:
+          tag_name: ${{ env.version }}
+          name: "OpenClash-v${{ env.version }}"
+          files: makeself/*.run
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
