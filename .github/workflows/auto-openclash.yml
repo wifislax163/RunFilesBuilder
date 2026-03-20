@@ -6,8 +6,8 @@
 name: Auto Build OpenClash Run Files
 
 on:
-  schedule:
-    - cron: '0 */6 * * *'   # 每6小时自动检查一次
+ # schedule:
+  #  - cron: '0 0 * * *'   # 每6小时自动检查一次
   workflow_dispatch:
     inputs:
       force_build:
