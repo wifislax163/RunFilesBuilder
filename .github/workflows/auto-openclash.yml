@@ -162,7 +162,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.version }}
-          name: "OpenClash ${{ env.version }} 自动构建版"
+          name: "OpenClash ${{ env.version }}"
           files: output/*
           token: ${{ secrets.GITHUB_TOKEN }}
           
