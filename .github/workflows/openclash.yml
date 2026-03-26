@@ -6,7 +6,7 @@
 # Blog: wkdaily.cpolar.cn
 #=================================================
 
-name: aotu openclash
+name: auto openclash
 
 on:
   schedule:
