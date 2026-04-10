@@ -9,30 +9,24 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete all old workflow runs (keep only latest 1 per workflow)
+      - name: Delete all old workflow runs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 获取所有工作流的名称和ID
-          gh api repos/${{ github.repository }}/actions/workflows --paginate -q '.workflows[] | "\(.name):\(.id)"' | while IFS=':' read name id; do
-            echo "Processing workflow: $name (ID: $id)"
+          # 获取所有工作流ID
+          for workflow_id in $(gh api repos/${{ github.repository }}/actions/workflows --paginate -q '.workflows[].id'); do
+            echo "Processing workflow ID: $workflow_id"
             
-            # 获取所有已完成运行的ID，按时间排序
-            RUN_IDS=$(gh api repos/${{ github.repository }}/actions/workflows/$id/runs \
-              --paginate -q '.workflow_runs[] | select(.status=="completed") | .id' | sort -r)
+            # 获取该工作流的所有已完成运行ID
+            run_ids=$(gh api repos/${{ github.repository }}/actions/workflows/$workflow_id/runs --paginate -q '.workflow_runs[].id')
             
-            # 统计总数
-            TOTAL=$(echo "$RUN_IDS" | wc -l)
-            # 需要删除的数量 = 总数 - 1
-            DELETE_COUNT=$((TOTAL - 1))
-            
-            if [ $DELETE_COUNT -gt 0 ]; then
-              # 保留最新1条，删除其余（跳过第1条）
-              echo "$RUN_IDS" | tail -n +2 | while read run_id; do
-                echo "  Deleting run ID: $run_id"
+            # 跳过第一个（最新），删除后面的
+            count=0
+            for run_id in $run_ids; do
+              count=$((count + 1))
+              if [ $count -gt 1 ]; then
+                echo "Deleting run ID: $run_id"
                 gh api -X DELETE repos/${{ github.repository }}/actions/runs/$run_id
-              done
-            else
-              echo "  Only 1 run found, nothing to delete"
-            fi
+              fi
+            done
           done
