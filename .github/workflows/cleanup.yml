@@ -1,19 +1,26 @@
-name: Auto Clean Actions Runs
+name: Cleanup Workflow Runs
+
 on:
   schedule:
-    - cron: '0 0 * * 0' # 每周日零时执行
+    - cron: '20 20 * * 0'
   workflow_dispatch:
 
 jobs:
-  delete-runs:
+  cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete workflow runs
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          # 保留最近 10 次运行记录
-          keep_minimum_runs: 1
-          # 删除超过 30 天的记录（与上面条件满足其一即删）
-          retain_days: 30
+      - name: Delete old auto openclash runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 获取 auto openclash 工作流的 ID
+          WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows -q '.workflows[] | select(.name=="auto openclash") | .id')
+          
+          # 删除该工作流中除最新 10 条外的所有已完成记录
+          gh api repos/${{ github.repository }}/actions/workflows/$WORKFLOW_ID/runs \
+            --paginate -q '.workflow_runs[] | select(.status=="completed") | .id' | \
+            head -n -10 | \
+            while read id; do
+              echo "Deleting auto openclash run ID: $id"
+              gh api -X DELETE repos/${{ github.repository }}/actions/runs/$id
+            done
