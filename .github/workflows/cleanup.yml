@@ -20,7 +20,6 @@ jobs:
             # 获取该工作流的所有已完成运行ID，保留最新1条，删除其余
             gh api repos/${{ github.repository }}/actions/workflows/$id/runs \
               --paginate -q '.workflow_runs[] | select(.status=="completed") | .id' | \
-            echo "  Found runs, keeping latest 1, deleting rest..."
               head -n -1 | \
               while read run_id; do
                 echo "  Deleting run ID: $run_id"
