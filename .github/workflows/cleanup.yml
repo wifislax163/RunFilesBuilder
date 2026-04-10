@@ -9,18 +9,21 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete old auto openclash runs
+      - name: Delete all old workflow runs (keep only latest 1 per workflow)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 获取 auto openclash 工作流的 ID
-          WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows -q '.workflows[] | select(.name=="auto openclash") | .id')
-          
-          # 删除该工作流中除最新 10 条外的所有已完成记录
-          gh api repos/${{ github.repository }}/actions/workflows/$WORKFLOW_ID/runs \
-            --paginate -q '.workflow_runs[] | select(.status=="completed") | .id' | \
-            head -n -10 | \
-            while read id; do
-              echo "Deleting auto openclash run ID: $id"
-              gh api -X DELETE repos/${{ github.repository }}/actions/runs/$id
-            done
+          # 获取所有工作流的名称和ID
+          gh api repos/${{ github.repository }}/actions/workflows --paginate -q '.workflows[] | "\(.name):\(.id)"' | while IFS=':' read name id; do
+            echo "Processing workflow: $name (ID: $id)"
+            
+            # 获取该工作流的所有已完成运行ID，保留最新1条，删除其余
+            gh api repos/${{ github.repository }}/actions/workflows/$id/runs \
+              --paginate -q '.workflow_runs[] | select(.status=="completed") | .id' | \
+            echo "  Found runs, keeping latest 1, deleting rest..."
+              head -n -1 | \
+              while read run_id; do
+                echo "  Deleting run ID: $run_id"
+                gh api -X DELETE repos/${{ github.repository }}/actions/runs/$run_id
+              done
+          done
