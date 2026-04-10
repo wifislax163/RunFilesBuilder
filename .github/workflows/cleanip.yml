@@ -1,0 +1,19 @@
+name: Auto Clean Actions Runs
+on:
+  schedule:
+    - cron: '0 0 * * 0' # 每周日零时执行
+  workflow_dispatch:
+
+jobs:
+  delete-runs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          # 保留最近 10 次运行记录
+          keep_minimum_runs: 10
+          # 删除超过 30 天的记录（与上面条件满足其一即删）
+          retain_days: 30
