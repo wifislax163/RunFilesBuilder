@@ -1,12 +1,12 @@
 #=================================================
 # https://github.com/wukongdaily/RunFilesBuilder
-# Description: Build RunFiles using GitHub Actions (ARM64 Only - Both IPK & APK)
+# Description: Build RunFiles using GitHub Actions
 # License: MIT
 # Author: wukongdaily
 # Blog: wkdaily.cpolar.cn
 #=================================================
 
-name: auto openclash arm64 (both ipk & apk)
+name: auto openclash arm64
 
 on:
   schedule:
@@ -106,7 +106,6 @@ jobs:
 
       - name: Copy latest meta core to both directories
         run: |
-          # 复制内核到两个工作目录中
           tar -xzvf Meta/master/meta/clash-linux-arm64.tar.gz -C openclash-a53-ipk
           mv openclash-a53-ipk/clash openclash-a53-ipk/clash_meta
           
@@ -165,7 +164,7 @@ jobs:
           mv openclash-a53-ipk makeself/
           mv openclash-a53-apk makeself/
           cd makeself
-          # 分别打包成两个不同的 .run 文件
+          # 恢复你原本的命名：传统包不带 ipk 后缀
           ./makeself.sh openclash-a53-ipk/ openclash-aarch64_cortex-a53-${{ env.version }}.run "by github action" ./install.sh
           ./makeself.sh openclash-a53-apk/ openclash-aarch64_cortex-a53-apk-${{ env.version }}.run "by github action" ./install.sh
 
@@ -177,6 +176,7 @@ jobs:
           tag_name: ${{ env.version }}
           target_commitish: ${{ github.ref_name }}
           prerelease: false
-          name: "OpenClash-Multi-Format-${{ env.version }}"
-          body: "![Github](https://img.shields.io/badge/OpenClash_Build-123456?logo=github&logoColor=fff&labelColor=red&style=for-the-badge) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.cn/archives/1)"
+          # 恢复你原汁原味的 Release 标题命名
+          name: "OpenClash-${{ env.version }}"
+          body: "![Github](https://img.shields.io/badge/OpenClash.run-123456?logo=github&logoColor=fff&labelColor=red&style=for-the-badge) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.cn/archives/1) ![GitHub Downloads (all assets, specific tag)](https://img.shields.io/github/downloads/wukongdaily/RunFilesBuilder/${{ env.version }}/total?style=for-the-badge&labelColor=black&color=%2325c2a0)"
           files: makeself/*.run
