@@ -1,12 +1,12 @@
 #=================================================
 # https://github.com/wukongdaily/RunFilesBuilder
-# Description: Build RunFiles using GitHub Actions
-# Lisence: MIT
+# Description: Build RunFiles using GitHub Actions (ARM64 Only - Both IPK & APK)
+# License: MIT
 # Author: wukongdaily
 # Blog: wkdaily.cpolar.cn
 #=================================================
 
-name: auto openclash
+name: auto openclash arm64 (both ipk & apk)
 
 on:
   schedule:
@@ -69,13 +69,12 @@ jobs:
 
   build:
     needs: check_version
-    # 只有当检查到新版本，或者手动触发了强制打包时才运行
     if: needs.check_version.outputs.has_update == 'true' || github.event.inputs.force_build == 'true'
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Create OpenClash & openclash directory for git & ipk
-        run: mkdir -p OpenClash openclash-x86 openclash-a53
+      - name: Create directories for IPK and APK
+        run: mkdir -p OpenClash openclash-a53-ipk openclash-a53-apk
         
       - name: Checkout package branch to OpenClash directory
         uses: actions/checkout@v4
@@ -84,15 +83,14 @@ jobs:
           path: OpenClash
           ref: package
           
-      - name: Copy latest openclash IPK to openclash directory
+      - name: Copy latest openclash IPK & APK to respective directories
         run: |
-          cp OpenClash/master/*.ipk openclash-x86
-          cp OpenClash/master/*.ipk openclash-a53
+          cp OpenClash/master/*.ipk openclash-a53-ipk/
+          cp OpenClash/master/*.apk openclash-a53-apk/
 
       - name: Get version info
         id: extract_version
         run: |
-          # 仅使用 tr 剔除文件末尾可能存在的隐藏换行符，原汁原味保留 v0.47.075
           first_line=$(head -n 1 OpenClash/master/version | tr -d '\r\n ')
           echo "version=$first_line" >> $GITHUB_ENV
 
@@ -105,22 +103,19 @@ jobs:
           repository: vernesong/OpenClash
           path: Meta
           ref: core
-      
-      - name: list all cores on core branch
-        run: ls Meta/master/meta
 
-      - name: Copy latest meta core to openclash directory
+      - name: Copy latest meta core to both directories
         run: |
-          tar -xzvf Meta/master/meta/clash-linux-amd64-v1.tar.gz -C openclash-x86
-          tar -xzvf Meta/master/meta/clash-linux-arm64.tar.gz -C openclash-a53
-          mv openclash-x86/clash openclash-x86/clash_meta
-          mv openclash-a53/clash openclash-a53/clash_meta
-          ls openclash-x86
-          ls openclash-a53
+          # 复制内核到两个工作目录中
+          tar -xzvf Meta/master/meta/clash-linux-arm64.tar.gz -C openclash-a53-ipk
+          mv openclash-a53-ipk/clash openclash-a53-ipk/clash_meta
+          
+          tar -xzvf Meta/master/meta/clash-linux-arm64.tar.gz -C openclash-a53-apk
+          mv openclash-a53-apk/clash openclash-a53-apk/clash_meta
 
-      - name: Create install.sh script save to openclash directory
+      - name: Create install.sh for IPK system (Traditional opkg)
         run: |
-          cat << 'EOF' > openclash-x86/install.sh
+          cat << 'EOF' > openclash-a53-ipk/install.sh
           opkg update
           if [ $? -ne 0 ]; then
               echo "update failed。"
@@ -137,21 +132,42 @@ jobs:
               exit 0
           fi
           EOF
-          chmod +x openclash-x86/install.sh
-          cp openclash-x86/install.sh openclash-a53/install.sh
-          chmod +x openclash-a53/install.sh
+          chmod +x openclash-a53-ipk/install.sh
+
+      - name: Create install.sh for APK system (OpenWrt 25.10 apk)
+        run: |
+          cat << 'EOF' > openclash-a53-apk/install.sh
+          apk update
+          if [ $? -ne 0 ]; then
+              echo "APK update failed."
+              exit 1
+          fi
+          apk add --allow-untrusted *.apk || exit 1
+          mkdir -p /etc/openclash/core/
+          mv clash_meta /etc/openclash/core/
+          sleep 10s
+          ifconfig br-lan > /dev/null 2>&1
+          if [ $? -ne 0 ]; then
+              echo "接口错误，重启网络。"
+              /etc/init.d/network restart
+              echo "重启完毕"
+              exit 0
+          fi
+          EOF
+          chmod +x openclash-a53-apk/install.sh
 
       - name: Clone makeself repository for self-extracting installer
         run: | 
           git clone https://github.com/megastep/makeself.git
 
-      - name: move openclash directory to makeself & create run
+      - name: move openclash directories to makeself & create run files
         run: |
-          mv openclash-x86 makeself/
-          mv openclash-a53 makeself/
+          mv openclash-a53-ipk makeself/
+          mv openclash-a53-apk makeself/
           cd makeself
-          ./makeself.sh openclash-x86/ openclash-x86-64-${{ env.version }}.run "by github action" ./install.sh
-          ./makeself.sh openclash-a53/ openclash-aarch64_cortex-a53-${{ env.version }}.run "by github action" ./install.sh
+          # 分别打包成两个不同的 .run 文件
+          ./makeself.sh openclash-a53-ipk/ openclash-aarch64_cortex-a53-${{ env.version }}.run "by github action" ./install.sh
+          ./makeself.sh openclash-a53-apk/ openclash-aarch64_cortex-a53-apk-${{ env.version }}.run "by github action" ./install.sh
 
       - name: Generate new tag & release and upload
         uses: softprops/action-gh-release@v2
@@ -161,7 +177,6 @@ jobs:
           tag_name: ${{ env.version }}
           target_commitish: ${{ github.ref_name }}
           prerelease: false
-          name: "OpenClash-${{ env.version }}"
-          body: "![Github](https://img.shields.io/badge/OpenClash.run-123456?logo=github&logoColor=fff&labelColor=red&style=for-the-badge) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.cn/archives/1) ![GitHub Downloads (all assets, specific tag)](https://img.shields.io/github/downloads/wukongdaily/RunFilesBuilder/${{ env.version }}/total?style=for-the-badge&labelColor=black&color=%2325c2a0)"
-          # 合并了上传附件的步骤，更加清爽稳定
+          name: "OpenClash-Multi-Format-${{ env.version }}"
+          body: "![Github](https://img.shields.io/badge/OpenClash_Build-123456?logo=github&logoColor=fff&labelColor=red&style=for-the-badge) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.cn/archives/1)"
           files: makeself/*.run
