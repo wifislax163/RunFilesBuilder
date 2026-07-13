@@ -164,8 +164,8 @@ jobs:
           mv openclash-a53-ipk makeself/
           mv openclash-a53-apk makeself/
           cd makeself
-          # 恢复你原本的命名：传统包不带 ipk 后缀
-          ./makeself.sh openclash-a53-ipk/ openclash-aarch64_cortex-a53-${{ env.version }}.run "by github action" ./install.sh
+          # 统一命名结构，使 ipk 格式的命名和 apk 格式完全保持一致
+          ./makeself.sh openclash-a53-ipk/ openclash-aarch64_cortex-a53-ipk-${{ env.version }}.run "by github action" ./install.sh
           ./makeself.sh openclash-a53-apk/ openclash-aarch64_cortex-a53-apk-${{ env.version }}.run "by github action" ./install.sh
 
       - name: Generate new tag & release and upload
@@ -176,7 +176,6 @@ jobs:
           tag_name: ${{ env.version }}
           target_commitish: ${{ github.ref_name }}
           prerelease: false
-          # 恢复你原汁原味的 Release 标题命名
           name: "OpenClash-${{ env.version }}"
           body: "![Github](https://img.shields.io/badge/OpenClash.run-123456?logo=github&logoColor=fff&labelColor=red&style=for-the-badge) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.cn/archives/1) ![GitHub Downloads (all assets, specific tag)](https://img.shields.io/github/downloads/wukongdaily/RunFilesBuilder/${{ env.version }}/total?style=for-the-badge&labelColor=black&color=%2325c2a0)"
           files: makeself/*.run
