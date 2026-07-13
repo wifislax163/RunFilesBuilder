@@ -164,8 +164,8 @@ jobs:
           mv openclash-a53-ipk makeself/
           mv openclash-a53-apk makeself/
           cd makeself
-          # 统一命名结构，使 ipk 格式的命名和 apk 格式完全保持一致
-          ./makeself.sh openclash-a53-ipk/ openclash-aarch64_cortex-a53-ipk-${{ env.version }}.run "by github action" ./install.sh
+          # 还原命名：传统包维持原样（不带 ipk）
+          ./makeself.sh openclash-a53-ipk/ openclash-aarch64_cortex-a53-${{ env.version }}.run "by github action" ./install.sh
           ./makeself.sh openclash-a53-apk/ openclash-aarch64_cortex-a53-apk-${{ env.version }}.run "by github action" ./install.sh
 
       - name: Generate new tag & release and upload
